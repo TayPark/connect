@@ -1,5 +1,5 @@
-= aws_sns
-:type: output
+= aws_cloudwatch_logs
+:type: input
 :status: stable
 :categories: ["Services","AWS"]
 
@@ -23,9 +23,9 @@
 component_type_dropdown::[]
 
 
-Sends messages to an AWS SNS topic.
+Consumes log events from AWS CloudWatch Logs.
 
-Introduced in version 3.36.0.
+Introduced in version 4.81.0.
 
 
 [tabs]
@@ -36,16 +36,16 @@ Common::
 
 ```yml
 # Common config fields, showing default values
-output:
+input:
   label: ""
-  aws_sns:
-    topic_arn: "" # No default (required)
-    message_group_id: "" # No default (optional)
-    message_deduplication_id: "" # No default (optional)
-    subject: "" # No default (optional)
-    max_in_flight: 64
-    metadata:
-      exclude_prefixes: []
+  aws_cloudwatch_logs:
+    log_group_name: my-app-logs # No default (required)
+    log_stream_names: [] # No default (optional)
+    log_stream_prefix: prod- # No default (optional)
+    filter_pattern: '[ERROR]' # No default (optional)
+    start_time: "2024-01-01T00:00:00Z" # No default (optional)
+    poll_interval: 5s
+    auto_replay_nacks: true
 ```
 
 --
@@ -55,17 +55,18 @@ Advanced::
 
 ```yml
 # All config fields, showing default values
-output:
+input:
   label: ""
-  aws_sns:
-    topic_arn: "" # No default (required)
-    message_group_id: "" # No default (optional)
-    message_deduplication_id: "" # No default (optional)
-    subject: "" # No default (optional)
-    max_in_flight: 64
-    metadata:
-      exclude_prefixes: []
-    timeout: 5s
+  aws_cloudwatch_logs:
+    log_group_name: my-app-logs # No default (required)
+    log_stream_names: [] # No default (optional)
+    log_stream_prefix: prod- # No default (optional)
+    filter_pattern: '[ERROR]' # No default (optional)
+    start_time: "2024-01-01T00:00:00Z" # No default (optional)
+    poll_interval: 5s
+    limit: 1000
+    structured_log: true
+    auto_replay_nacks: true
     region: "" # No default (optional)
     endpoint: "" # No default (optional)
     tcp:
@@ -88,89 +89,140 @@ output:
 --
 ======
 
-== Credentials
+Polls CloudWatch Log Groups for log events. Supports filtering by log streams, CloudWatch filter patterns, and configurable start times.
+
+Each log event becomes a separate message with metadata including the log group name, log stream name, timestamp, and ingestion time.
+
+IMPORTANT: This input tracks its position in memory only. If the process restarts, it will resume from the configured start_time (or the beginning if not set). For exactly-once processing, you should configure an appropriate start_time or implement idempotent downstream processing.
+
+## Credentials
 
 By default Redpanda Connect will use a shared credentials file when connecting to AWS services. It's also possible to set them explicitly at the component level, allowing you to transfer data across accounts. You can find out more in xref:guides:cloud/aws.adoc[].
 
-== Performance
+## Metadata
 
-This output benefits from sending multiple messages in flight in parallel for improved performance. You can tune the max number of in flight messages (or message batches) with the field `max_in_flight`.
+This input adds the following metadata fields to each message:
+
+- `cloudwatch_log_group` - The name of the log group
+- `cloudwatch_log_stream` - The name of the log stream
+- `cloudwatch_timestamp` - The timestamp of the log event (Unix milliseconds)
+- `cloudwatch_ingestion_time` - The ingestion timestamp (Unix milliseconds)
+- `cloudwatch_event_id` - The unique event ID
+
+You can access these metadata fields using xref:guides:bloblang/about.adoc[Bloblang].
+
 
 == Fields
 
-=== `topic_arn`
+=== `log_group_name`
 
-The topic to publish to.
-This field supports xref:configuration:interpolation.adoc#bloblang-queries[interpolation functions].
-
-
-*Type*: `string`
-
-
-=== `message_group_id`
-
-An optional group ID to set for messages.
-This field supports xref:configuration:interpolation.adoc#bloblang-queries[interpolation functions].
-
-
-*Type*: `string`
-
-Requires version 3.60.0 or newer
-
-=== `message_deduplication_id`
-
-An optional deduplication ID to set for messages.
-This field supports xref:configuration:interpolation.adoc#bloblang-queries[interpolation functions].
-
-
-*Type*: `string`
-
-Requires version 3.60.0 or newer
-
-=== `subject`
-
-An optional subject to set for messages.
-This field supports xref:configuration:interpolation.adoc#bloblang-queries[interpolation functions].
+The name of the CloudWatch Log Group to consume from.
 
 
 *Type*: `string`
 
 
-=== `max_in_flight`
+```yml
+# Examples
 
-The maximum number of messages to have in flight at a given time. Increase this to improve throughput.
+log_group_name: my-app-logs
+```
 
+=== `log_stream_names`
 
-*Type*: `int`
-
-*Default*: `64`
-
-=== `metadata`
-
-Specify criteria for which metadata values are sent as headers.
-
-
-*Type*: `object`
-
-Requires version 3.60.0 or newer
-
-=== `metadata.exclude_prefixes`
-
-Provide a list of explicit metadata key prefixes to be excluded when adding metadata to sent messages.
+An optional list of log stream names to consume from. If not set, events from all streams in the log group will be consumed.
 
 
 *Type*: `array`
 
-*Default*: `[]`
 
-=== `timeout`
+```yml
+# Examples
 
-The maximum period to wait on an upload before abandoning it and reattempting.
+log_stream_names:
+  - stream-1
+  - stream-2
+```
+
+=== `log_stream_prefix`
+
+An optional log stream name prefix to filter streams. Only streams starting with this prefix will be consumed.
+
+
+*Type*: `string`
+
+
+```yml
+# Examples
+
+log_stream_prefix: prod-
+```
+
+=== `filter_pattern`
+
+An optional CloudWatch Logs filter pattern to apply when querying log events. See AWS documentation for filter pattern syntax.
+
+
+*Type*: `string`
+
+
+```yml
+# Examples
+
+filter_pattern: '[ERROR]'
+```
+
+=== `start_time`
+
+The time to start consuming log events from. Can be an RFC3339 timestamp (e.g., `2024-01-01T00:00:00Z`) or the string `now` to start consuming from the current time. If not set, starts from the beginning of available logs.
+
+
+*Type*: `string`
+
+
+```yml
+# Examples
+
+start_time: "2024-01-01T00:00:00Z"
+
+start_time: now
+```
+
+=== `poll_interval`
+
+The interval at which to poll for new log events.
 
 
 *Type*: `string`
 
 *Default*: `"5s"`
+
+=== `limit`
+
+The maximum number of log events to return in a single API call. Valid range: 1-10000.
+
+
+*Type*: `int`
+
+*Default*: `1000`
+
+=== `structured_log`
+
+Whether to output log events as structured JSON objects with all metadata fields, or as plain text messages with metadata in message metadata.
+
+
+*Type*: `bool`
+
+*Default*: `true`
+
+=== `auto_replay_nacks`
+
+Whether messages that are rejected (nacked) at the output level should be automatically replayed indefinitely, eventually resulting in back pressure if the cause of the rejections is persistent. If set to `false` these messages will instead be deleted. Disabling auto replays can greatly improve memory efficiency of high throughput streams as the original shape of the data can be discarded immediately upon consumption and mutation.
+
+
+*Type*: `bool`
+
+*Default*: `true`
 
 === `region`
 
