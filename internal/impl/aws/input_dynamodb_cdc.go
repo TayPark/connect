@@ -135,12 +135,8 @@ This input emits the following metrics:
 				Description("Table discovery mode. `single`: stream from tables specified in `tables` list. `tag`: auto-discover tables by tags (ignores `tables` field). `includelist`: stream from tables in `tables` list (alias for `single`, kept for compatibility).").
 				Default("single").
 				Advanced(),
-			service.NewStringField("table_tag_key").
-				Description("Tag key to filter tables by when `table_discovery_mode` is `tag`. Only tables with this tag will be discovered.").
-				Default("").
-				Advanced(),
-			service.NewStringField("table_tag_value").
-				Description("Optional tag value to match when `table_discovery_mode` is `tag`. If empty, any table with the tag key will match.").
+			service.NewStringField("table_tag_filter").
+				Description("Multi-tag filter in Confluent format: 'key1:v1,v2;key2:v3,v4'. Matches tables with (key1=v1 OR key1=v2) AND (key2=v3 OR key2=v4). Required when `table_discovery_mode` is `tag`.").
 				Default("").
 				Advanced(),
 			service.NewDurationField("table_discovery_interval").
@@ -240,10 +236,22 @@ input:
 input:
   aws_dynamodb_cdc:
     table_discovery_mode: tag
-    table_tag_key: "stream-enabled"
-    table_tag_value: "true"
+    table_tag_filter: "stream-enabled:true"
     table_discovery_interval: 5m
     region: us-east-1
+`,
+		).
+		Example(
+			"Auto-discover tables by multiple tags (Confluent format)",
+			"Discover tables matching multiple tag criteria with OR logic per key, AND logic across keys.",
+			`
+input:
+  aws_dynamodb_cdc:
+    table_discovery_mode: tag
+    table_tag_filter: "environment:prod,staging;team:data,analytics"
+    table_discovery_interval: 5m
+    region: us-east-1
+    # Matches tables with: (environment=prod OR environment=staging) AND (team=data OR team=analytics)
 `,
 		).
 		Example(
@@ -285,8 +293,8 @@ type snapshotConfig struct {
 type dynamoDBCDCConfig struct {
 	tables                 []string
 	tableDiscoveryMode     string
-	tableTagKey            string
-	tableTagValue          string
+	tableTagFilter         string              // Confluent-style multi-tag filter: "key1:v1,v2;key2:v3"
+	parsedTagFilter        map[string][]string // Parsed filter for efficient matching
 	tableDiscoveryInterval time.Duration
 	checkpointTable        string
 	batchSize              int
@@ -498,12 +506,78 @@ func (s *snapshotSequenceBuffer) Size() int {
 	return int(s.totalCount.Load())
 }
 
+// parseTableTagFilter parses Confluent-style tag filter format.
+// Format: "key1:v1,v2;key2:v3,v4" means (key1=v1 OR v1=v2) AND (key2=v3 OR v2=v4)
+// Returns: map[tagKey][]acceptableValues for efficient matching
+func parseTableTagFilter(filter string) (map[string][]string, error) {
+	if filter == "" {
+		return nil, nil
+	}
+
+	result := make(map[string][]string)
+
+	// Split by semicolon to get key-value groups
+	keyValuePairs := strings.Split(filter, ";")
+
+	for _, pair := range keyValuePairs {
+		// Trim whitespace to allow "key1:v1 ; key2:v2" format
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		// Split by first colon to separate key from values
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid tag filter format at '%s': expected 'key:value1,value2' format", pair)
+		}
+
+		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			return nil, fmt.Errorf("empty tag key in filter '%s'", pair)
+		}
+
+		// Check for duplicate keys
+		if _, exists := result[key]; exists {
+			return nil, fmt.Errorf("duplicate tag key '%s' in filter", key)
+		}
+
+		// Split values by comma
+		valueStr := strings.TrimSpace(parts[1])
+		if valueStr == "" {
+			return nil, fmt.Errorf("empty tag value list for key '%s'", key)
+		}
+
+		values := strings.Split(valueStr, ",")
+		trimmedValues := make([]string, 0, len(values))
+
+		for _, v := range values {
+			trimmed := strings.TrimSpace(v)
+			if trimmed != "" {
+				trimmedValues = append(trimmedValues, trimmed)
+			}
+		}
+
+		if len(trimmedValues) == 0 {
+			return nil, fmt.Errorf("no valid values for tag key '%s'", key)
+		}
+
+		result[key] = trimmedValues
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no valid tag filters found in '%s'", filter)
+	}
+
+	return result, nil
+}
+
 // validateDynamoDBCDCConfig validates the configuration for consistency
 func validateDynamoDBCDCConfig(conf dynamoDBCDCConfig) error {
 	// Validate tag discovery mode requirements
 	if conf.tableDiscoveryMode == "tag" {
-		if conf.tableTagKey == "" {
-			return errors.New("table_tag_key is required when table_discovery_mode is 'tag'")
+		if conf.tableTagFilter == "" {
+			return errors.New("table_tag_filter is required when table_discovery_mode is 'tag'")
 		}
 	}
 
@@ -531,11 +605,14 @@ func dynamoCDCInputConfigFromParsed(pConf *service.ParsedConfig) (conf dynamoDBC
 	if conf.tableDiscoveryMode, err = pConf.FieldString("table_discovery_mode"); err != nil {
 		return
 	}
-	if conf.tableTagKey, err = pConf.FieldString("table_tag_key"); err != nil {
+	if conf.tableTagFilter, err = pConf.FieldString("table_tag_filter"); err != nil {
 		return
 	}
-	if conf.tableTagValue, err = pConf.FieldString("table_tag_value"); err != nil {
-		return
+	// Parse tag filter at config time if provided
+	if conf.tableTagFilter != "" {
+		if conf.parsedTagFilter, err = parseTableTagFilter(conf.tableTagFilter); err != nil {
+			return conf, fmt.Errorf("invalid table_tag_filter: %w", err)
+		}
 	}
 	if conf.tableDiscoveryInterval, err = pConf.FieldDuration("table_discovery_interval"); err != nil {
 		return
@@ -639,8 +716,8 @@ func (d *dynamoDBCDCInput) discoverTables(ctx context.Context) ([]string, error)
 		return d.conf.tables, nil
 
 	case "tag":
-		if d.conf.tableTagKey == "" {
-			return nil, errors.New("table_tag_key cannot be empty when table_discovery_mode is tag")
+		if d.conf.tableTagFilter == "" {
+			return nil, errors.New("table_tag_filter cannot be empty when table_discovery_mode is tag")
 		}
 		return d.discoverTablesByTag(ctx)
 
@@ -701,18 +778,34 @@ func (d *dynamoDBCDCInput) discoverTablesByTag(ctx context.Context) ([]string, e
 					break
 				}
 
-				// Check if table has matching tag
+				// Check if table has matching tags
+				matchedTags := make(map[string]bool)
+
 				for _, tag := range tagsOutput.Tags {
-					if tag.Key != nil && *tag.Key == d.conf.tableTagKey {
-						// If tag value is specified, check for match
-						if d.conf.tableTagValue == "" || (tag.Value != nil && *tag.Value == d.conf.tableTagValue) {
-							matchingTables = append(matchingTables, tableName)
-							d.log.Infof("Discovered table %s with tag %s=%s", tableName, d.conf.tableTagKey,
-								aws.ToString(tag.Value))
-							foundMatch = true
+					if tag.Key == nil || tag.Value == nil {
+						continue
+					}
+
+					// Check if this tag key is in our filter
+					acceptedValues, exists := d.conf.parsedTagFilter[*tag.Key]
+					if !exists {
+						continue // Not a key we're filtering on
+					}
+
+					// Check if the value matches any accepted value for this key
+					for _, acceptedValue := range acceptedValues {
+						if *tag.Value == acceptedValue {
+							matchedTags[*tag.Key] = true
 							break
 						}
 					}
+				}
+
+				// Must match ALL keys (AND logic across keys)
+				if len(matchedTags) == len(d.conf.parsedTagFilter) {
+					matchingTables = append(matchingTables, tableName)
+					d.log.Infof("Discovered table %s matching tag filter with tags: %v", tableName, matchedTags)
+					foundMatch = true
 				}
 
 				if foundMatch || tagsOutput.NextToken == nil {
@@ -729,7 +822,7 @@ func (d *dynamoDBCDCInput) discoverTablesByTag(ctx context.Context) ([]string, e
 	}
 
 	if len(matchingTables) == 0 {
-		d.log.Warnf("No tables found with tag %s=%s", d.conf.tableTagKey, d.conf.tableTagValue)
+		d.log.Warnf("No tables found matching tag filter: %s", d.conf.tableTagFilter)
 	}
 
 	return matchingTables, nil
