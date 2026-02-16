@@ -57,8 +57,7 @@ input:
   aws_dynamodb_cdc:
     tables: []
     table_discovery_mode: single
-    table_tag_key: ""
-    table_tag_value: ""
+    table_tag_filter: ""
     table_discovery_interval: 5m
     checkpoint_table: redpanda_dynamodb_checkpoints
     batch_size: 1000
@@ -223,10 +222,26 @@ Automatically discover and stream from all tables with a specific tag.
 input:
   aws_dynamodb_cdc:
     table_discovery_mode: tag
-    table_tag_key: "stream-enabled"
-    table_tag_value: "true"
+    table_tag_filter: "stream-enabled:true"
     table_discovery_interval: 5m
     region: us-east-1
+```
+
+--
+Auto-discover tables by multiple tags (Confluent format)::
++
+--
+
+Discover tables matching multiple tag criteria with OR logic per key, AND logic across keys.
+
+```yaml
+input:
+  aws_dynamodb_cdc:
+    table_discovery_mode: tag
+    table_tag_filter: "environment:prod,staging;team:data,analytics"
+    table_discovery_interval: 5m
+    region: us-east-1
+    # Matches tables with: (environment=prod OR environment=staging) AND (team=data OR team=analytics)
 ```
 
 --
@@ -276,18 +291,9 @@ Options:
 , `includelist`
 .
 
-=== `table_tag_key`
+=== `table_tag_filter`
 
-Tag key to filter tables by when `table_discovery_mode` is `tag`. Only tables with this tag will be discovered.
-
-
-*Type*: `string`
-
-*Default*: `""`
-
-=== `table_tag_value`
-
-Optional tag value to match when `table_discovery_mode` is `tag`. If empty, any table with the tag key will match.
+Multi-tag filter in Confluent format: 'key1:v1,v2;key2:v3,v4'. Matches tables with (key1=v1 OR key1=v2) AND (key2=v3 OR key2=v4). Required when `table_discovery_mode` is `tag`.
 
 
 *Type*: `string`
