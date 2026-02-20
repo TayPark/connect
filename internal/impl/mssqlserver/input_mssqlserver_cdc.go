@@ -58,7 +58,8 @@ Additionally, if ` + "`" + fieldStreamSnapshot + "`" + ` is set to true, then th
 == Metadata
 
 This input adds the following metadata fields to each message:
-- schema (Schema of the table that the message originated from)
+- schema (The table schema in benthos common schema format, compatible with processors like parquet_encode)
+- db_schema (SQL schema name of the table, e.g. "dbo")
 - table (Name of the table that the message originated from)
 - operation (Type of operation that generated the message: "read", "delete", "insert", or "update_before" and "update_after". "read" is from messages that are read in the initial snapshot phase.)
 - lsn (the Log Sequence Number in Microsoft SQL Server)

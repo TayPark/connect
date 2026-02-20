@@ -3,6 +3,12 @@ Changelog
 
 All notable changes to this project will be documented in this file.
 
+## 4.82.0 - TBD
+
+### Added
+
+- The `microsoft_sql_server_cdc` input now adds schema metadata to consumed messages, this can be used for automatic schema conversion in processors such as `schema_registry_encode`. (@Jeffail)
+
 ## 4.81.0 - 2026-02-18
 
 ### Added
