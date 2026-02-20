@@ -104,7 +104,6 @@ func TestTimeConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &timeConverter{nullable: true, scale: tc.scale}
 			runTestcase(t, c, tc)
@@ -194,7 +193,6 @@ func TestNumberConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			c := &numberConverter{
 				nullable:  true,
@@ -218,7 +216,6 @@ func TestRealConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &doubleConverter{nullable: true}
 			runTestcase(t, c, tc)
@@ -246,7 +243,6 @@ func TestBoolConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &boolConverter{nullable: true}
 			runTestcase(t, c, tc)
@@ -266,7 +262,6 @@ func TestBinaryConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &binaryConverter{nullable: true, maxLength: 56}
 			runTestcase(t, c, tc)
@@ -290,7 +285,6 @@ func TestStringConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &binaryConverter{nullable: true, maxLength: 56, utf8: true}
 			runTestcase(t, c, tc)
@@ -344,7 +338,6 @@ func TestTimestampNTZConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			loc, err := time.LoadLocation("America/New_York")
 			require.NoError(t, err)
@@ -372,7 +365,6 @@ func TestTimestampTZConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			loc, err := time.LoadLocation("America/New_York")
 			require.NoError(t, err)
@@ -412,7 +404,6 @@ func TestTimestampLTZConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			loc, err := time.LoadLocation("America/New_York")
 			require.NoError(t, err)
@@ -458,7 +449,6 @@ func TestDateConverter(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			c := &dateConverter{nullable: true}
 			runTestcase(t, c, tc)
