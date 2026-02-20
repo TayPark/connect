@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 
 ## 4.82.0 - TBD
 
+### Added
+
+- The `postgres_cdc` input now adds schema metadata to consumed messages, this can be used for automatic schema conversion in processors such as `schema_registry_encode`. (@Jeffail)
+
 ### Fixed
 
 - `test` command: Templates registered via the `-t` flag are now correctly available during test execution. (@Phantal)
